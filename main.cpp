@@ -12,11 +12,23 @@
 #include "primitive.h"
 #include "light.h"
 
+float toSRGB(float in)
+{
+	if (in <= 0.0031308f)
+	{
+		return in * 12.92f;
+	}
+	else
+	{
+		return pow(in * 1.055f, 0.416f) - 0.055f;
+	}
+}
+
 int main() {
 	const int IMAGE_W = 1920;
 	const int IMAGE_H = 1080;
 
-	std::vector<uint8_t> data(IMAGE_W * IMAGE_H * 3);
+	std::vector<float> image(IMAGE_W * IMAGE_H * 3);
 	std::unique_ptr<Sphere> s = std::make_unique<Sphere>(vector3(0.0f, 0.0f, -3.0f), 1.0f);
 	std::unique_ptr<GeometricPrimitive> gp = std::make_unique<GeometricPrimitive>(std::move(s));
 	std::vector<std::unique_ptr<Primitive>> primitives;
@@ -45,9 +57,9 @@ int main() {
 			vector3 filmDir(filmX, filmY, filmZ);
 			Ray camRay(vector3(0.0f, 0.0f, 0.0f), filmDir.normalized());
 
-			uint8_t r = 0;
-			uint8_t g = 0;
-			uint8_t b = 0;
+			float r = 0;
+			float g = 0;
+			float b = 0;
 
 			bool hit = false;
 			Hit hitData;
@@ -55,29 +67,41 @@ int main() {
 			hit = scene.Intersect(camRay, &hitData);
 			if (hit)
 			{
-/*				r = 255;
-				g = 0;
-				b = 0;*/
 				float L = 0.0f;
 				for (auto &light: scene.m_lights)
 				{
 					vector3 lightDir = (light->pos - hitData.position).normalized();
-					L += lightDir.dot(hitData.normal);
+					float lightContrib = lightDir.dot(hitData.normal);
+					if (lightContrib > 0.0f)
+					{
+						L += lightContrib;
+					}
 				}
-				r = (255.0f * L);
-				g = 0;
-				b = 0;
+				r = L;
+				g = 0.0f;
+				b = 0.0f;
 			}
 			else
 			{
-				r = 0;
-				g = 50;
-				b = 127;
+				r = 0.0f;
+				g = 0.2f;
+				b = 0.5f;
 			}
 
-			data[(y * IMAGE_W + x) * 3 + 0] = r;
-			data[(y * IMAGE_W + x) * 3 + 1] = g;
-			data[(y * IMAGE_W + x) * 3 + 2] = b;
+			image[(y * IMAGE_W + x) * 3 + 0] = toSRGB(r);
+			image[(y * IMAGE_W + x) * 3 + 1] = toSRGB(g);
+			image[(y * IMAGE_W + x) * 3 + 2] = toSRGB(b);
+		}
+	}
+
+	std::vector<uint8_t> data(IMAGE_W * IMAGE_H * 3);
+	for (int y = 0; y < IMAGE_H; ++y)
+	{
+		for (int x = 0; x < IMAGE_W; ++x)
+		{
+			data[(y * IMAGE_W + x) * 3 + 0] = static_cast<uint8_t>(image[(y * IMAGE_W + x) * 3 + 0] * 255.0f);
+			data[(y * IMAGE_W + x) * 3 + 1] = static_cast<uint8_t>(image[(y * IMAGE_W + x) * 3 + 1] * 255.0f);
+			data[(y * IMAGE_W + x) * 3 + 2] = static_cast<uint8_t>(image[(y * IMAGE_W + x) * 3 + 2] * 255.0f);
 		}
 	}
 
