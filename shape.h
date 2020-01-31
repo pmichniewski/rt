@@ -1,9 +1,12 @@
 #pragma once
 
 #include "ray.h"
+#include "hit.h"
 
 class Shape
 {
 public:
-	virtual bool intersect(Ray r, float &t) = 0;
+	Shape() {}
+	virtual ~Shape() {}
+	virtual bool Intersect(const Ray &r, float *t, Hit *h) = 0;
 };
