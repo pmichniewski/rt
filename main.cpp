@@ -6,11 +6,12 @@
 
 #include "math.h"
 #include "sphere.h"
-#include "shape.h"
+#include "plane.h"
 #include "ray.h"
 #include "scene.h"
 #include "primitive.h"
 #include "light.h"
+#include "material.h"
 
 float toSRGB(float in)
 {
@@ -84,11 +85,15 @@ int main() {
 	const float imageW = static_cast<float>(IMAGE_W);
 	const float imageH = static_cast<float>(IMAGE_H);
 
+	Material red(vector3(1.0f, 0.0f, 0.0f), 0.2f, 0.0f);
+	Material brown(vector3(0.5f, 0.3f, 0.0f), 0.8f, 0.0f);
+
 	std::vector<float> image(IMAGE_W * IMAGE_H * 3);
-	std::unique_ptr<Sphere> s = std::make_unique<Sphere>(vector3(0.0f, 0.0f, -3.0f), 0.5f);
-	std::unique_ptr<GeometricPrimitive> gp = std::make_unique<GeometricPrimitive>(std::move(s));
+	std::unique_ptr<GeometricPrimitive> sphere1 = std::make_unique<GeometricPrimitive>(std::make_unique<Sphere>(vector3(0.0f, 0.0f, -3.0f), 0.5f), &red);
+	std::unique_ptr<GeometricPrimitive> plane1 = std::make_unique<GeometricPrimitive>(std::make_unique<Plane>(vector3(0.0f, 1.0f, 0.0f), -2.0f), &brown);
 	std::vector<std::unique_ptr<Primitive>> primitives;
-	primitives.push_back(std::move(gp));
+	primitives.push_back(std::move(sphere1));
+	primitives.push_back(std::move(plane1));
 	LoosePrimitives prims(std::move(primitives));
 
 	std::vector<std::unique_ptr<Light>> lights;
@@ -117,9 +122,6 @@ int main() {
 			float b = 0;
 
 			bool hit = false;
-			vector3 sphereColor(1.0f, 0.0f, 0.0f);
-			float sphereRoughness = 0.2f;
-			float sphereMetalness = 0.0f;
 			Hit hitData;
 
 			vector3 L;
@@ -133,12 +135,9 @@ int main() {
 					vector3 lightDir = lightVec.normalized();
 					float lightDistance = lightVec.length();
 					float lightContrib = lightDir.dot(hitData.normal);
-//					if (lightContrib > 0.0f)
-//					{
-//						L += lightContrib;
-//					}
 					float attenuation = (lightDistance * lightDistance);
-					L += DisneyBRDF(hitData.normal, lightDir, -camRay.direction, sphereColor, sphereRoughness, sphereMetalness) * light->color; 
+					Material *m = hitData.primitive->GetMaterial();
+					L += DisneyBRDF(hitData.normal, lightDir, -camRay.direction, m->color, m->roughness, m->metalness) * light->color; 
 				}
 			}
 			else

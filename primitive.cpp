@@ -4,7 +4,7 @@
 
 #include <memory>
 
-GeometricPrimitive::GeometricPrimitive(std::unique_ptr<Shape> &&shape)
+GeometricPrimitive::GeometricPrimitive(std::unique_ptr<Shape> &&shape, Material *m): m_material(m)
 {
 	m_shape = std::move(shape);
 }

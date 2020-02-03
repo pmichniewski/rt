@@ -2,12 +2,13 @@ TARGET := rt
 CXXFLAGS := -std=c++17
 CXX := g++
 SRCS := \
-main.cpp \
-math.cpp \
-sphere.cpp \
-scene.cpp \
-ray.cpp \
-primitive.cpp
+	main.cpp \
+	math.cpp \
+	sphere.cpp \
+	scene.cpp \
+	ray.cpp \
+	plane.cpp \
+	primitive.cpp
 
 OBJS := $(SRCS:.cpp=.o)
 DEPS := $(SRCS:.cpp=.d)
