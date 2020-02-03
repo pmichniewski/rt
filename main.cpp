@@ -24,6 +24,60 @@ float toSRGB(float in)
 	}
 }
 
+float disneySchlick(float u)
+{
+	return std::pow(1.0f - u, 5.0f);
+}
+
+float disneyGTR2(float NdotH, float alpha) {
+	float alpha2 = alpha * alpha;
+	float t = 1.0f + (alpha2 - 1.0f) * NdotH * NdotH;
+	return alpha2 / (pi * t * t);
+}
+
+float disneySmithG_GGX(float NdotV, float alphaG) {
+	float a = alphaG * alphaG;
+	float b = NdotV * NdotV;
+	return 1.0 / (NdotV + sqrt(a + b - a * b));
+}
+
+vector3 DisneyBRDF(vector3 N, vector3 L, vector3 V, vector3 baseColor, float roughness, float metalness)
+{
+	float NdotV = N.dot(V);
+	float NdotL = N.dot(L);
+
+	roughness = std::max(0.001f, roughness); // just in case
+
+	vector3 H = (L + V).normalized();
+	float LdotH = L.dot(H);
+	float NdotH = N.dot(H);
+
+	vector3 f0 = lerp(vector3(0.04f, 0.04f, 0.04f), baseColor, metalness); // 4% reflectivity for dielectrics
+
+	//diffuse
+	float FL = disneySchlick(NdotL);
+	float FV = disneySchlick(NdotV);
+	float Fd90 = 0.5f + 2.0f * NdotH * LdotH * roughness;
+	float Fd = lerp(1.0f, Fd90, FL) * lerp(1.0f, Fd90, FV);
+
+	//specular
+	float alpha = roughness * roughness;
+	float Ds = disneyGTR2(NdotH, alpha);
+	float FH = disneySchlick(LdotH);
+	vector3 Fs = lerp(f0, vector3(1.0f, 1.0f, 1.0f), FH);
+	float roughg = (roughness * 0.5f + 0.5f) * (roughness * 0.5f + 0.5f);
+	float Gs = disneySmithG_GGX(NdotL, roughg) * disneySmithG_GGX(NdotV, roughg);
+
+	return rcpPi * Fd * (1.0f - metalness) * baseColor + Gs * Fs * Ds;
+}
+
+vector3 Reinhard(vector3 color)
+{
+	vector3 mapped = color / (color + vector3(1.0f, 1.0f, 1.0f));
+
+	return mapped;
+}
+
 int main() {
 	const int IMAGE_W = 1920;
 	const int IMAGE_H = 1080;
@@ -36,7 +90,7 @@ int main() {
 	LoosePrimitives prims(std::move(primitives));
 
 	std::vector<std::unique_ptr<Light>> lights;
-	lights.push_back(std::make_unique<Light>(vector3(0.0f, 1.0f, 2.0f), vector3(1.0f, 1.0f, 1.0f)));
+	lights.push_back(std::make_unique<Light>(vector3(-1.0f, 1.0f, 2.0f), vector3(1.0f, 1.0f, 1.0f)));
 
 	Scene scene(prims, lights);
 
@@ -51,8 +105,8 @@ int main() {
 	{
 		for (int x = 0; x < IMAGE_W; ++x)
 		{
-			float filmX = ((float)x / static_cast<float>(IMAGE_W - 1) - 0.5f) * filmW;
-			float filmY = ((float)y / static_cast<float>(IMAGE_H - 1) - 0.5f) * filmH;
+			float filmX = -((float)x / static_cast<float>(IMAGE_W - 1) - 0.5f) * filmW; //TODO: we negate this because near plane is negative
+			float filmY = ((float)y / static_cast<float>(IMAGE_H - 1) - 0.5f) * filmH; // we should actually negate this. Find out the proper math at some point
 			float filmZ = -near;
 			vector3 filmDir(filmX, filmY, filmZ);
 			Ray camRay(vector3(0.0f, 0.0f, 0.0f), filmDir.normalized());
@@ -62,35 +116,37 @@ int main() {
 			float b = 0;
 
 			bool hit = false;
+			vector3 sphereColor(1.0f, 0.0f, 0.0f);
+			float sphereRoughness = 0.5f;
+			float sphereMetalness = 0.0f;
 			Hit hitData;
+
+			vector3 L;
 
 			hit = scene.Intersect(camRay, &hitData);
 			if (hit)
 			{
-				float L = 0.0f;
 				for (auto &light: scene.m_lights)
 				{
 					vector3 lightDir = (light->pos - hitData.position).normalized();
 					float lightContrib = lightDir.dot(hitData.normal);
-					if (lightContrib > 0.0f)
-					{
-						L += lightContrib;
-					}
+//					if (lightContrib > 0.0f)
+//					{
+//						L += lightContrib;
+//					}
+					L += DisneyBRDF(hitData.normal, lightDir, -camRay.direction, sphereColor, sphereRoughness, sphereMetalness);
 				}
-				r = L;
-				g = 0.0f;
-				b = 0.0f;
 			}
 			else
 			{
-				r = 0.0f;
-				g = 0.2f;
-				b = 0.5f;
+				L = vector3(0.0f, 0.2f, 0.5f);
 			}
 
-			image[(y * IMAGE_W + x) * 3 + 0] = toSRGB(r);
-			image[(y * IMAGE_W + x) * 3 + 1] = toSRGB(g);
-			image[(y * IMAGE_W + x) * 3 + 2] = toSRGB(b);
+			L = Reinhard(L);
+
+			image[(y * IMAGE_W + x) * 3 + 0] = toSRGB(L.x);
+			image[(y * IMAGE_W + x) * 3 + 1] = toSRGB(L.y);
+			image[(y * IMAGE_W + x) * 3 + 2] = toSRGB(L.z);
 		}
 	}
 

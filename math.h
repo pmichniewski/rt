@@ -17,12 +17,25 @@ public:
 
 	float length() const;
 	float dot(const vector3 &o) const;
-	vector3 &operator +=(const vector3 &o);
-	vector3 &operator -=(const vector3 &o);
-	vector3 &operator *=(float f);
+	vector3 &operator+=(const vector3 &o);
+	vector3 &operator-=(const vector3 &o);
+	vector3 &operator*=(const vector3 &o);
+	vector3 &operator/=(const vector3 &o);
+	vector3 operator-() const;
+	vector3 &operator*=(float f);
+	vector3 &operator/=(float f);
 	friend std::ostream& operator<<(std::ostream& os, const vector3& v);
 };
 
-vector3 operator +(const vector3 &a, const vector3 &b);
-vector3 operator -(const vector3 &a, const vector3 &b);
-vector3 operator *(const vector3 &a, float f);
+float lerp(float a, float b, float t);
+vector3 lerp(const vector3 &a, const vector3 &b, float t);
+
+vector3 operator+(const vector3 &a, const vector3 &b);
+vector3 operator-(const vector3 &a, const vector3 &b);
+vector3 operator*(const vector3 &a, const vector3 &b);
+vector3 operator/(const vector3 &a, const vector3 &b);
+vector3 operator*(const vector3 &a, float f);
+vector3 operator*(float f, const vector3 &b);
+
+constexpr float pi = 3.1415927f;
+constexpr float rcpPi = 1.0f / pi;
