@@ -12,6 +12,9 @@ primitive.cpp
 OBJS := $(SRCS:.cpp=.o)
 DEPS := $(SRCS:.cpp=.d)
 
+OUTFILE := out.ppm
+TARGET_FILE := /mnt/e/Projects/$(OUTFILE)
+
 .DEFAULT_GOAL := all
 
 -include $(DEPS)
@@ -21,6 +24,14 @@ DEPS := $(SRCS:.cpp=.d)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@
+
+$(OUTFILE): $(TARGET)
+	./$(TARGET)
+
+$(TARGET_FILE): $(OUTFILE)
+	cp $(OUTFILE) $(TARGET_FILE)
+
+.PHONY test: $(TARGET_FILE)
 
 all: $(TARGET)
 

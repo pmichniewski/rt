@@ -21,6 +21,13 @@ vector3 lerp(const vector3 &a, const vector3 &b, float t)
 	return result;
 }
 
+float clamp(float v, float a, float b)
+{
+	if (v < a) return a;
+	if (v > b) return b;
+	return v;
+}
+
 float lerp(float a, float b, float t)
 {
 	return (1.0f - t) * a + t * b;
@@ -66,6 +73,12 @@ vector3 operator*(float f, const vector3 &b)
 	vector3 result = b;
 	result *= f;
 	return result;
+}
+
+vector3 operator/(const vector3 &a, float f)
+{
+	float rcp = 1.0f / f;
+	return a * rcp;
 }
 
 float vector3::length() const

@@ -29,12 +29,14 @@ public:
 
 float lerp(float a, float b, float t);
 vector3 lerp(const vector3 &a, const vector3 &b, float t);
+float clamp(float v, float a, float b);
 
 vector3 operator+(const vector3 &a, const vector3 &b);
 vector3 operator-(const vector3 &a, const vector3 &b);
 vector3 operator*(const vector3 &a, const vector3 &b);
 vector3 operator/(const vector3 &a, const vector3 &b);
 vector3 operator*(const vector3 &a, float f);
+vector3 operator/(const vector3 &a, float f);
 vector3 operator*(float f, const vector3 &b);
 
 constexpr float pi = 3.1415927f;
