@@ -1,9 +1,3 @@
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <cstdint>
-#include <limits>
-
 #include "math.h"
 #include "sphere.h"
 #include "plane.h"
@@ -12,6 +6,13 @@
 #include "primitive.h"
 #include "light.h"
 #include "material.h"
+
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <cstdint>
+#include <limits>
+#include <algorithm>
 
 float toSRGB(float in)
 {
