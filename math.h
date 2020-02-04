@@ -17,6 +17,7 @@ public:
 
 	float length() const;
 	float dot(const vector3 &o) const;
+	vector3 cross(const vector3 &o) const;
 	vector3 &operator+=(const vector3 &o);
 	vector3 &operator-=(const vector3 &o);
 	vector3 &operator*=(const vector3 &o);

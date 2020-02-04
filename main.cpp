@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <limits>
 #include <algorithm>
+#include <random>
+#include <functional>
 
 float toSRGB(float in)
 {
@@ -80,14 +82,95 @@ vector3 Reinhard(vector3 color)
 	return mapped;
 }
 
+void coordinateSystem(const vector3 &v1, vector3 *v2, vector3 *v3)
+{
+	if (std::abs(v1.x) > std::abs(v1.y))
+	{
+		*v2 = vector3(-v1.z, 0.0f, v1.x) / std::sqrt(v1.x * v1.x + v1.z * v1.z);
+	}
+	else
+	{
+		*v2 = vector3(0.0f, v1.z, -v1.y) / std::sqrt(v1.y * v1.y + v1.z * v1.z);
+	}
+	*v3 = v1.cross(*v2);
+}
+
+#if 1
+vector3 TransformToWorld(float x, float y, float z, vector3 &normal) {
+	// Find an axis that is not parallel to normal
+	vector3 majorAxis;
+	if (std::abs(normal.x) < 0.57735026919f /* 1 / sqrt(3) */) {
+		majorAxis = vector3(1, 0, 0);
+	}
+	else if (std::abs(normal.y) < 0.57735026919f /* 1 / sqrt(3) */) {
+		majorAxis = vector3(0, 1, 0);
+	}
+	else {
+		majorAxis = vector3(0, 0, 1);
+	}
+
+	// Use majorAxis to create a coordinate system relative to world space
+	vector3 u = vector3(normal.cross(majorAxis));
+	vector3 v = normal.cross(u);
+	vector3 w = normal;
+
+
+	// Transform from local coordinates to world coordinates
+	return u * x +
+		v * y +
+		w * z;
+}
+#endif
+
+vector3 ImportanceSampleGGX(std::function<float(void)> randomGen, vector3 normal, vector3 wo, Material *m, vector3 &wi)
+{
+	float a = m->roughness;
+	float a2 = a * a;
+
+	float e0 = randomGen();
+	float e1 = randomGen();
+
+	float theta = std::acos(std::sqrt((1.0f - e0) / ((a2 - 1.0f) * e0 + 1.0f)));
+	float phi = 2.0f * pi * e1;
+
+	vector3 wm = vector3(std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi), std::cos(theta)).normalized();
+	/*vector3 tangent;
+	vector3 binormal;
+	coordinateSystem(normal, &tangent, &binormal);
+	wm = normal * wm.x + tangent * wm.y + binormal * wm.z;*/
+	wm = TransformToWorld(wm.x, wm.y, wm.z, normal);
+
+	wi = 2.0f * wo.dot(wm) * wm - wo;
+
+	float dotWiWm = wi.dot(wm);
+	if (normal.dot(wi) > 0.0f && dotWiWm > 0.0f)
+	{
+		float dotWoWm = wo.dot(wm);
+		vector3 f0 = lerp(vector3(0.04f, 0.04f, 0.04f), m->color, m->metalness); // 4% reflectivity for dielectrics
+		vector3 F = lerp(f0, vector3(1.0f, 1.0f, 1.0f), disneySchlick(dotWiWm));
+		float G = disneySmithG_GGX(dotWoWm, a2) * disneySmithG_GGX(dotWiWm, a2);
+		float weight = std::abs(dotWoWm) / (normal.dot(wo) * normal.dot(wi));
+
+		return F * G * weight;
+	}
+	else
+	{
+		return vector3(0.0f, 0.0f, 0.0f);
+	}
+}
+
 int main() {
 	const int IMAGE_W = 1920;
 	const int IMAGE_H = 1080;
 	const float imageW = static_cast<float>(IMAGE_W);
 	const float imageH = static_cast<float>(IMAGE_H);
 
-	Material red(vector3(1.0f, 0.0f, 0.0f), 0.1f, 0.0f);
-	Material brown(vector3(0.0f, 0.43f, 0.0f), 0.8f, 0.0f);
+	Material red(vector3(1.0f, 1.0f, 1.0f), 0.1f, 1.0f);
+	Material brown(vector3(0.0f, 0.43f, 0.0f), 1.0f, 0.0f);
+
+	std::random_device rd;
+	std::minstd_rand gen(rd());
+	std::uniform_real_distribution<float> dis(0.0f, 1.0f);
 
 	std::vector<float> image(IMAGE_W * IMAGE_H * 3);
 	std::unique_ptr<GeometricPrimitive> sphere1 = std::make_unique<GeometricPrimitive>(std::make_unique<Sphere>(vector3(0.0f, 0.0f, -3.0f), 0.5f), &red);
@@ -108,50 +191,86 @@ int main() {
 	float filmW = tan(fov / 2.0f * pi / 180.0f) * aspect;
 	float filmH = tan(fov / 2.0f * pi / 180.0f);
 
+	static const int sampleCount = 16;
+
 	for(int y = 0; y < IMAGE_H; ++y)
 	{
 		for (int x = 0; x < IMAGE_W; ++x)
 		{
-			float filmX = (2.0f * (static_cast<float>(x) + 0.5f) / imageW - 1.0f) * filmW;
-			float filmY = (1.0f - 2.0f * (static_cast<float>(y) + 0.5f) / imageH) * filmH;
-			float filmZ = -1.0f;
-			vector3 filmDir(filmX, filmY, filmZ);
-			Ray camRay(vector3(0.0f, 0.0f, 0.0f), filmDir.normalized());
-
-			float r = 0;
-			float g = 0;
-			float b = 0;
-
-			bool hit = false;
-			Hit hitData;
-
 			vector3 L;
 
-			hit = scene.Intersect(camRay, &hitData);
-			if (hit)
+			for (int sample = 0; sample < sampleCount; ++sample)
 			{
-				for (auto &light: scene.m_lights)
+				/*if (x == 1065 && y == 780)
 				{
-					vector3 lightVec = light->pos - hitData.position;
-					vector3 lightDir = lightVec.normalized();
-					Ray lightRay(hitData.position + (hitData.normal * 1e-5), lightDir);
-					if (!scene.Intersect(lightRay, nullptr))
+					std::cout << x << std::endl;
+				}*/
+
+				float filmX = (2.0f * (static_cast<float>(x) + 0.5f) / imageW - 1.0f) * filmW;
+				float filmY = (1.0f - 2.0f * (static_cast<float>(y) + 0.5f) / imageH) * filmH;
+				float filmZ = -1.0f;
+				vector3 filmDir(filmX, filmY, filmZ);
+				Ray ray(vector3(0.0f, 0.0f, 0.0f), filmDir.normalized());
+
+				bool hit = true;
+				int bounces = 10;
+				vector3 throughput(1.0f, 1.0f, 1.0f);
+
+				while (bounces > 0 && hit)
+				{
+					Hit hitData;
+
+					hit = scene.Intersect(ray, &hitData);
+					if (hit)
 					{
-						float lightDistance = lightVec.length();
-						float lightContrib = lightDir.dot(hitData.normal);
-						float attenuation = (lightDistance * lightDistance);
 						Material *m = hitData.primitive->GetMaterial();
-						L += DisneyBRDF(hitData.normal, lightDir, -camRay.direction, m->color, m->roughness, m->metalness) * light->color; 
+
+						for (auto &light : scene.m_lights)
+						{
+							vector3 lightVec = light->pos - hitData.position;
+							vector3 lightDir = lightVec.normalized();
+							Ray lightRay(hitData.position + (hitData.normal * 1e-5), lightDir);
+							if (!scene.Intersect(lightRay, nullptr))
+							{
+								float lightDistance = lightVec.length();
+								float lightContrib = lightDir.dot(hitData.normal);
+								float attenuation = (lightDistance * lightDistance);
+								L += DisneyBRDF(hitData.normal, lightDir, -ray.direction, m->color, m->roughness, m->metalness) * light->color * throughput;
+							}
+						}
+
+						//vector3 reflected = ray.direction - (2.0f * (hitData.normal.dot(ray.direction)) * hitData.normal);
+						//auto rnd = [&gen, &dis]() {
+						//	return dis(gen());
+						//}
+
+/*						vector3 tangent;
+						vector3 binormal;
+						coordinateSystem(hitData.normal, &tangent, &binormal);*/
+
+						vector3 wo = -ray.direction;
+//						wo = vector3(hitData.normal.dot(wo), tangent.dot(wo), binormal.dot(wo));
+
+						vector3 reflected;
+						throughput *= ImportanceSampleGGX([&gen, &dis]()->float { return dis(gen); }, hitData.normal, wo, m, reflected);
+
+//						reflected = hitData.normal * reflected.x + tangent * reflected.y + binormal * reflected.z;
+
+						ray.direction = reflected;
+						ray.tMax = std::numeric_limits<float>::infinity();
+						ray.origin += ray.direction * 1e-5;
+
+						bounces--;
+					}
+					else
+					{
+						//L += vector3(0.0f, 0.2f, 0.5f) * throughput;
+						L += vector3(0.0f, 0.0f, 0.0f) * throughput;
 					}
 				}
 			}
-			else
-			{
-				L = vector3(0.0f, 0.2f, 0.5f);
-//				L = vector3(0.0f, 0.0f, 0.0f);
-			}
 
-			L = Reinhard(L);
+			L = Reinhard(L / static_cast<float>(sampleCount));
 
 			image[(y * IMAGE_W + x) * 3 + 0] = toSRGB(L.x);
 			image[(y * IMAGE_W + x) * 3 + 1] = toSRGB(L.y);
