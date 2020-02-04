@@ -134,7 +134,7 @@ int main() {
 				{
 					vector3 lightVec = light->pos - hitData.position;
 					vector3 lightDir = lightVec.normalized();
-					Ray lightRay(hitData.position, lightDir);
+					Ray lightRay(hitData.position + (hitData.normal * 1e-5), lightDir);
 					if (!scene.Intersect(lightRay, nullptr))
 					{
 						float lightDistance = lightVec.length();
