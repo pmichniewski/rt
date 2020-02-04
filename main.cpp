@@ -85,8 +85,8 @@ int main() {
 	const float imageW = static_cast<float>(IMAGE_W);
 	const float imageH = static_cast<float>(IMAGE_H);
 
-	Material red(vector3(1.0f, 0.0f, 0.0f), 0.2f, 0.0f);
-	Material brown(vector3(0.5f, 0.3f, 0.0f), 0.8f, 0.0f);
+	Material red(vector3(1.0f, 0.0f, 0.0f), 0.1f, 0.0f);
+	Material brown(vector3(0.0f, 0.43f, 0.0f), 0.8f, 0.0f);
 
 	std::vector<float> image(IMAGE_W * IMAGE_H * 3);
 	std::unique_ptr<GeometricPrimitive> sphere1 = std::make_unique<GeometricPrimitive>(std::make_unique<Sphere>(vector3(0.0f, 0.0f, -3.0f), 0.5f), &red);
@@ -97,7 +97,7 @@ int main() {
 	LoosePrimitives prims(std::move(primitives));
 
 	std::vector<std::unique_ptr<Light>> lights;
-	lights.push_back(std::make_unique<Light>(vector3(-1.5f, 0.0f, -4.0f), vector3(5.0f, 5.0f, 5.0f)));
+	lights.push_back(std::make_unique<Light>(vector3(-1.5f, 1.0f, 3.0f), vector3(5.0f, 5.0f, 5.0f)));
 
 	Scene scene(prims, lights);
 
@@ -133,11 +133,15 @@ int main() {
 				{
 					vector3 lightVec = light->pos - hitData.position;
 					vector3 lightDir = lightVec.normalized();
-					float lightDistance = lightVec.length();
-					float lightContrib = lightDir.dot(hitData.normal);
-					float attenuation = (lightDistance * lightDistance);
-					Material *m = hitData.primitive->GetMaterial();
-					L += DisneyBRDF(hitData.normal, lightDir, -camRay.direction, m->color, m->roughness, m->metalness) * light->color; 
+					Ray lightRay(hitData.position, lightDir);
+					if (!scene.Intersect(lightRay, nullptr))
+					{
+						float lightDistance = lightVec.length();
+						float lightContrib = lightDir.dot(hitData.normal);
+						float attenuation = (lightDistance * lightDistance);
+						Material *m = hitData.primitive->GetMaterial();
+						L += DisneyBRDF(hitData.normal, lightDir, -camRay.direction, m->color, m->roughness, m->metalness) * light->color; 
+					}
 				}
 			}
 			else

@@ -12,8 +12,11 @@ bool Plane::Intersect(const Ray &r, float *t, Hit *h)
 		if (t0 > 0.0f && t0 < r.tMax)
 		{
 			*t = t0;
-			h->position = r.direction * (*t);
-			h->normal = normal;
+			if (h)
+			{
+				h->position = r.direction * (*t);
+				h->normal = normal;
+			}
 			return true;
 		}
 	}

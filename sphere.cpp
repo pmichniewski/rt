@@ -31,20 +31,23 @@ bool Sphere::Intersect(const Ray &ray, float *t, Hit *h)
 		float t1 = c / q;
 
 		if (t0 > t1) std::swap(t0, t1);
-		if (t0 < 0.0f)
+		if (t0 <= 0.0f)
 		{
 			t0 = t1;
-			if (t0 < 0.0f) return false;
+			if (t0 <= 0.0f) return false;
 		}
-		if (t0 > ray.tMax)
+		if (t0 >= ray.tMax)
 		{
 			return false;
 		}
 		*t = t0;
 	}
 
-	h->position = ray.direction * (*t);
-	h->normal = (h->position - m_center).normalized();
+	if (h)
+	{
+		h->position = ray.direction * (*t);
+		h->normal = (h->position - m_center).normalized();
+	}
 
 	return true;
 }

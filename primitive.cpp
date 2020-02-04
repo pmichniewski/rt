@@ -18,7 +18,10 @@ bool GeometricPrimitive::Intersect(const Ray &r, Hit *hit) const
 	float tHit;
 	if (!m_shape->Intersect(r, &tHit, hit)) return false;
 	r.tMax = tHit;
-	hit->primitive = this;
+	if (hit)
+	{
+		hit->primitive = this;
+	}
 	return true;
 }
 
