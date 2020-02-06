@@ -261,4 +261,5 @@ __pycache__/
 *.pyc
 
 #output image
-out.ppm
+*.ppm
+*.png

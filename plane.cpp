@@ -14,7 +14,7 @@ bool Plane::Intersect(const Ray &r, float *t, Hit *h)
 			*t = t0;
 			if (h)
 			{
-				h->position = r.direction * (*t);
+				h->position = r.origin + r.direction * (*t);
 				h->normal = normal;
 			}
 			return true;

@@ -45,7 +45,7 @@ bool Sphere::Intersect(const Ray &ray, float *t, Hit *h)
 
 	if (h)
 	{
-		h->position = ray.direction * (*t);
+		h->position = ray.origin + ray.direction * (*t);
 		h->normal = (h->position - m_center).normalized();
 	}
 
