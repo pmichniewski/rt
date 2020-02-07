@@ -41,5 +41,10 @@ vector3 operator*(const vector3 &a, float f);
 vector3 operator/(const vector3 &a, float f);
 vector3 operator*(float f, const vector3 &b);
 
+inline uint32_t divideRoundingUp(uint32_t a, uint32_t b)
+{
+	return (a + b - 1) / b;
+}
+
 constexpr float pi = 3.1415927f;
 constexpr float rcpPi = 1.0f / pi;

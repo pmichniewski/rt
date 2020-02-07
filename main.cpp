@@ -15,6 +15,10 @@
 #include <algorithm>
 #include <random>
 #include <functional>
+#include <thread>
+#include <cstdint>
+#include <mutex>
+#include <optional>
 
 float toSRGB(float in)
 {
@@ -193,6 +197,133 @@ float pdf(vector3 inputDirection, vector3 normal)
 	return inputDirection.dot(normal) * rcpPi;
 }
 
+struct tileData
+{
+	int x1;
+	int y1;
+	int x2;
+	int y2;
+	float *tileOutput;
+};
+
+void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int tileW, int tileH, int imageW, int imageH, float filmW, float filmH, vector3 cameraOrigin, const Scene *scene)
+{
+	auto getTile = [tileInfos, tileLock]()->std::optional<tileData>
+	{
+		std::scoped_lock lock(*tileLock);
+		if (tileInfos->size() > 0)
+		{
+			tileData data = tileInfos->back();
+			tileInfos->pop_back();
+			return data;
+		}
+		return std::nullopt;
+	};
+
+	std::random_device rd;
+	std::minstd_rand gen(rd());
+	std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+
+	static const int sampleCount = 64; // TODO: move this someplace better
+	auto tile = getTile();
+	while (tile.has_value())
+	{
+		tileData data = tile.value();
+//		std::cout << "Rendering tile x: " << data.x1 << " y: " << data.y1 << std::endl;
+
+		for (int y = 0; y < data.y2 - data.y1; ++y)
+		{
+			for (int x = 0; x < data.x2 - data.x1; ++x)
+			{
+				vector3 L;
+
+				for (int sample = 0; sample < sampleCount; ++sample)
+				{
+	/*				if (x == 57 && y == 162)
+					{
+						std::cout << x << std::endl;
+					}*/
+
+					float filmX = (2.0f * (static_cast<float>(data.x1 + x) + 0.5f) / imageW - 1.0f) * filmW;
+					float filmY = (1.0f - 2.0f * (static_cast<float>(data.y1 + y) + 0.5f) / imageH) * filmH;
+					float filmZ = -1.0f;
+					vector3 filmDir(filmX, filmY, filmZ);
+					Ray ray(cameraOrigin, filmDir.normalized());
+
+					bool hit = true;
+					int bounces = 10;
+					vector3 throughput(1.0f, 1.0f, 1.0f);
+
+					while (bounces > 0 && hit)
+					{
+						Hit hitData;
+
+						hit = scene->Intersect(ray, &hitData);
+						if (hit)
+						{
+							Material *m = hitData.primitive->GetMaterial();
+
+							for (auto &light : scene->m_lights)
+							{
+								vector3 lightVec = light->pos - hitData.position;
+								vector3 lightDir = lightVec.normalized();
+								Ray lightRay(hitData.position + (hitData.normal * 1e-5), lightDir);
+								if (!scene->Intersect(lightRay, nullptr))
+								{
+									float lightDistance = lightVec.length();
+									float lightContrib = lightDir.dot(hitData.normal);
+									float attenuation = (lightDistance * lightDistance);
+									L += DisneyBRDF(hitData.normal, lightDir, -ray.direction, m->color, m->roughness, m->metalness) * light->color * throughput;
+								}
+							}
+
+							//vector3 reflected = ray.direction - (2.0f * (hitData.normal.dot(ray.direction)) * hitData.normal);
+							//auto rnd = [&gen, &dis]() {
+							//	return dis(gen());
+							//}
+
+	/*						vector3 tangent;
+							vector3 binormal;
+							coordinateSystem(hitData.normal, &tangent, &binormal);*/
+
+							vector3 wo = -ray.direction;
+	//						wo = vector3(hitData.normal.dot(wo), tangent.dot(wo), binormal.dot(wo));
+
+							vector3 reflected;
+							throughput *= ImportanceSampleGGX([&gen, &dis]()->float { return dis(gen); }, hitData.normal, wo, m, reflected);
+	//						reflected = ImportanceSample(hitData.normal, [&gen, &dis]()->float { return dis(gen); });
+	//						throughput *= DisneyBRDF(hitData.normal, reflected, -ray.direction, m->color, m->roughness, m->metalness) / pdf(reflected, hitData.normal);
+
+	//						reflected = hitData.normal * reflected.x + tangent * reflected.y + binormal * reflected.z;
+
+							ray.direction = reflected;
+							ray.tMax = std::numeric_limits<float>::infinity();
+							ray.origin = hitData.position;
+							ray.origin += ray.direction * 1e-6;
+
+							bounces--;
+						}
+						else
+						{
+							if (scene->GetSkyMaterial())
+							{
+								L += scene->GetSkyMaterial()->color * throughput;
+							}
+						}
+					}
+				}
+
+				L = Reinhard(L / static_cast<float>(sampleCount));
+
+				data.tileOutput[(y * tileW + x) * 3 + 0] = toSRGB(L.x);
+				data.tileOutput[(y * tileW + x) * 3 + 1] = toSRGB(L.y);
+				data.tileOutput[(y * tileW + x) * 3 + 2] = toSRGB(L.z);
+			}
+		}
+		tile = getTile();
+	}
+}
+
 int main() {
 	const int IMAGE_W = 1920;
 	const int IMAGE_H = 1080;
@@ -205,11 +336,6 @@ int main() {
 	//Material brown(vector3(1.0f, 1.0f, 1.0f), 0.01f, 1.0f);
 	Material sky(vector3(0.0f, 0.2f, 0.5f), 1.0f, 0.0f);
 
-	std::random_device rd;
-	std::minstd_rand gen(rd());
-	std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-
-	std::vector<float> image(IMAGE_W * IMAGE_H * 3);
 	std::unique_ptr<GeometricPrimitive> sphere1 = std::make_unique<GeometricPrimitive>(std::make_unique<Sphere>(vector3(0.0f, 0.0f, -3.0f), 0.5f), &red);
 	std::unique_ptr<GeometricPrimitive> plane1 = std::make_unique<GeometricPrimitive>(std::make_unique<Plane>(vector3(0.0f, 1.0f, 0.0f), -0.5f), &brown);
 	std::vector<std::unique_ptr<Primitive>> primitives;
@@ -221,6 +347,7 @@ int main() {
 	lights.push_back(std::make_unique<Light>(vector3(-1.5f, 1.0f, 3.0f), vector3(5.0f, 5.0f, 5.0f)));
 
 	Scene scene(prims, lights);
+	scene.m_skyMaterial = &sky;
 
 	vector3 cameraOrigin(0.0f, 0.0f, 0.0f);
 	float fov = 37.8f;
@@ -228,106 +355,65 @@ int main() {
 	float filmW = tan(fov / 2.0f * pi / 180.0f) * aspect;
 	float filmH = tan(fov / 2.0f * pi / 180.0f);
 
-	static const int sampleCount = 64;
+	static const int tileWidth = 32;
+	static const int tileHeight = 32;
+	static const int tileStride = tileWidth * tileHeight * 3;
+	static const int tileCountX = divideRoundingUp(IMAGE_W, tileWidth);
+	static const int tileCountY = divideRoundingUp(IMAGE_H, tileHeight);
 
-	for(int y = 0; y < IMAGE_H; ++y)
+	std::vector<float> image(tileCountX * tileCountY * tileStride);
+
+	std::vector<tileData> tiles;
+
+	for (int y = 0; y < tileCountY; ++y)
 	{
-		if (y % 10 == 0) {
-			std::cout << y * 100 / IMAGE_H << std::endl;
-		}
-		for (int x = 0; x < IMAGE_W; ++x)
+		for (int x = 0; x < tileCountX; ++x)
 		{
-			vector3 L;
-
-			for (int sample = 0; sample < sampleCount; ++sample)
-			{
-/*				if (x == 57 && y == 162)
-				{
-					std::cout << x << std::endl;
-				}*/
-
-				float filmX = (2.0f * (static_cast<float>(x) + 0.5f) / imageW - 1.0f) * filmW;
-				float filmY = (1.0f - 2.0f * (static_cast<float>(y) + 0.5f) / imageH) * filmH;
-				float filmZ = -1.0f;
-				vector3 filmDir(filmX, filmY, filmZ);
-				Ray ray(cameraOrigin, filmDir.normalized());
-
-				bool hit = true;
-				int bounces = 10;
-				vector3 throughput(1.0f, 1.0f, 1.0f);
-
-				while (bounces > 0 && hit)
-				{
-					Hit hitData;
-
-					hit = scene.Intersect(ray, &hitData);
-					if (hit)
-					{
-						Material *m = hitData.primitive->GetMaterial();
-
-						for (auto &light : scene.m_lights)
-						{
-							vector3 lightVec = light->pos - hitData.position;
-							vector3 lightDir = lightVec.normalized();
-							Ray lightRay(hitData.position + (hitData.normal * 1e-5), lightDir);
-							if (!scene.Intersect(lightRay, nullptr))
-							{
-								float lightDistance = lightVec.length();
-								float lightContrib = lightDir.dot(hitData.normal);
-								float attenuation = (lightDistance * lightDistance);
-								L += DisneyBRDF(hitData.normal, lightDir, -ray.direction, m->color, m->roughness, m->metalness) * light->color * throughput;
-							}
-						}
-
-						//vector3 reflected = ray.direction - (2.0f * (hitData.normal.dot(ray.direction)) * hitData.normal);
-						//auto rnd = [&gen, &dis]() {
-						//	return dis(gen());
-						//}
-
-/*						vector3 tangent;
-						vector3 binormal;
-						coordinateSystem(hitData.normal, &tangent, &binormal);*/
-
-						vector3 wo = -ray.direction;
-//						wo = vector3(hitData.normal.dot(wo), tangent.dot(wo), binormal.dot(wo));
-
-						vector3 reflected;
-						throughput *= ImportanceSampleGGX([&gen, &dis]()->float { return dis(gen); }, hitData.normal, wo, m, reflected);
-//						reflected = ImportanceSample(hitData.normal, [&gen, &dis]()->float { return dis(gen); });
-//						throughput *= DisneyBRDF(hitData.normal, reflected, -ray.direction, m->color, m->roughness, m->metalness) / pdf(reflected, hitData.normal);
-
-//						reflected = hitData.normal * reflected.x + tangent * reflected.y + binormal * reflected.z;
-
-						ray.direction = reflected;
-						ray.tMax = std::numeric_limits<float>::infinity();
-						ray.origin = hitData.position;
-						ray.origin += ray.direction * 1e-6;
-
-						bounces--;
-					}
-					else
-					{
-						L += sky.color * throughput;
-					}
-				}
-			}
-
-			L = Reinhard(L / static_cast<float>(sampleCount));
-
-			image[(y * IMAGE_W + x) * 3 + 0] = toSRGB(L.x);
-			image[(y * IMAGE_W + x) * 3 + 1] = toSRGB(L.y);
-			image[(y * IMAGE_W + x) * 3 + 2] = toSRGB(L.z);
+			tileData tile;
+			tile.x1 = x * tileWidth;
+			tile.y1 = y * tileHeight;
+			tile.x2 = std::min((x + 1) * tileWidth, IMAGE_W);
+			tile.y2 = std::min((y + 1) * tileHeight, IMAGE_H);
+			tile.tileOutput = &image[(y * tileCountX + x) * tileStride];
+			tiles.push_back(tile);
 		}
 	}
 
-	std::vector<uint8_t> data(IMAGE_W * IMAGE_H * 3);
-	for (int y = 0; y < IMAGE_H; ++y)
+	std::vector<std::thread> workers;
+	std::mutex tileLock;
+	int maxThreads = std::thread::hardware_concurrency();
+	for (int i = 0; i < maxThreads; ++i) {
+		std::thread t(renderWorker, &tiles, &tileLock, tileWidth, tileHeight, IMAGE_W, IMAGE_H, filmW, filmH, cameraOrigin, &scene);
+		workers.push_back(std::move(t));
+	}
+
+	for (int i = 0; i < maxThreads; ++i)
 	{
-		for (int x = 0; x < IMAGE_W; ++x)
+		workers[i].join();
+	}
+
+	std::vector<uint8_t> data(IMAGE_W * IMAGE_H * 3);
+	for (int y = 0; y < tileCountY; ++y)
+	{
+		for (int x = 0; x < tileCountX; ++x)
 		{
-			data[(y * IMAGE_W + x) * 3 + 0] = static_cast<uint8_t>(image[(y * IMAGE_W + x) * 3 + 0] * 255.0f);
-			data[(y * IMAGE_W + x) * 3 + 1] = static_cast<uint8_t>(image[(y * IMAGE_W + x) * 3 + 1] * 255.0f);
-			data[(y * IMAGE_W + x) * 3 + 2] = static_cast<uint8_t>(image[(y * IMAGE_W + x) * 3 + 2] * 255.0f);
+			for (int tileY = 0; tileY < tileHeight; ++tileY)
+			{
+				for (int tileX = 0; tileX < tileWidth; ++tileX)
+				{
+					int targetX = x * tileWidth + tileX;
+					int targetY = y * tileHeight + tileY;
+					if (targetX < IMAGE_W && targetY < IMAGE_H)
+					{
+						data[(targetY * IMAGE_W + targetX) * 3 + 0] =
+							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 0] * 255.0f);
+						data[(targetY * IMAGE_W + targetX) * 3 + 1] =
+							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 1] * 255.0f);
+						data[(targetY * IMAGE_W + targetX) * 3 + 2] =
+							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 2] * 255.0f);
+					}
+				}
+			}
 		}
 	}
 
