@@ -137,13 +137,10 @@ static float SmithGGXMaskingShadowing(vector3 wi, vector3 wo, vector3 normal, fl
 	return 2.0f * dotNL * dotNV / (denomA + denomB);
 }
 
-vector3 ImportanceSampleGGX(std::function<float(void)> randomGen, vector3 normal, vector3 wo, Material *m, vector3 &wi)
+vector3 ImportanceSampleGGX(float e0, float e1, vector3 normal, vector3 wo, Material *m, vector3 &wi)
 {
 	float a = m->roughness * m->roughness;
 	float a2 = a * a;
-
-	float e0 = randomGen();
-	float e1 = randomGen();
 
 	float theta = std::acos(std::sqrt((1.0f - e0) / ((a2 - 1.0f) * e0 + 1.0f)));
 	float phi = 2.0f * pi * e1;
@@ -197,6 +194,21 @@ float pdf(vector3 inputDirection, vector3 normal)
 	return inputDirection.dot(normal) * rcpPi;
 }
 
+float radicalInverse_VdC(uint32_t bits) {
+	bits = (bits << 16u) | (bits >> 16u);
+	bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+	bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+	bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+	bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+	return float(bits) * 2.3283064365386963e-10; // / 0x100000000
+}
+
+void hammersley(uint32_t i, uint32_t N, uint32_t offset, float *a, float *b)
+{
+	*a = static_cast<float>(i) / static_cast<float>(N);
+	*b = radicalInverse_VdC(i + offset);
+}
+
 struct tileData
 {
 	int x1;
@@ -224,7 +236,8 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 	std::minstd_rand gen(rd());
 	std::uniform_real_distribution<float> dis(0.0f, 1.0f);
 
-	static const int sampleCount = 64; // TODO: move this someplace better
+	static const int sampleCount = 256; // TODO: move this someplace better
+	static const int bounceCount = 10; // TODO: move this someplace better
 	auto tile = getTile();
 	while (tile.has_value())
 	{
@@ -243,18 +256,21 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 					{
 						std::cout << x << std::endl;
 					}*/
+					float subSampleX;
+					float subSampleY;
+					hammersley(sample, sampleCount, 0, &subSampleX, &subSampleY);
 
-					float filmX = (2.0f * (static_cast<float>(data.x1 + x) + 0.5f) / imageW - 1.0f) * filmW;
-					float filmY = (1.0f - 2.0f * (static_cast<float>(data.y1 + y) + 0.5f) / imageH) * filmH;
+					float filmX = (2.0f * (static_cast<float>(data.x1 + x) + (subSampleX - 0.5f)) / imageW - 1.0f) * filmW;
+					float filmY = (1.0f - 2.0f * (static_cast<float>(data.y1 + y) + (subSampleY - 0.5f)) / imageH) * filmH;
 					float filmZ = -1.0f;
 					vector3 filmDir(filmX, filmY, filmZ);
 					Ray ray(cameraOrigin, filmDir.normalized());
 
 					bool hit = true;
-					int bounces = 10;
+					int bounce = 0;
 					vector3 throughput(1.0f, 1.0f, 1.0f);
 
-					while (bounces > 0 && hit)
+					while (bounce < bounceCount && hit)
 					{
 						Hit hitData;
 
@@ -273,7 +289,7 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 									float lightDistance = lightVec.length();
 									float lightContrib = lightDir.dot(hitData.normal);
 									float attenuation = (lightDistance * lightDistance);
-									L += DisneyBRDF(hitData.normal, lightDir, -ray.direction, m->color, m->roughness, m->metalness) * light->color * throughput;
+									L += DisneyBRDF(hitData.normal, lightDir, -ray.direction, m->color, m->roughness, m->metalness) * light->color * light->strength * throughput / attenuation;
 								}
 							}
 
@@ -290,7 +306,11 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 	//						wo = vector3(hitData.normal.dot(wo), tangent.dot(wo), binormal.dot(wo));
 
 							vector3 reflected;
-							throughput *= ImportanceSampleGGX([&gen, &dis]()->float { return dis(gen); }, hitData.normal, wo, m, reflected);
+							float e0 = dis(gen);
+							float e1 = dis(gen);
+							//hammersley(sample, sampleCount, 0, &e0, &e1);
+							throughput *= ImportanceSampleGGX(e0, e1, hitData.normal, wo, m, reflected);
+//							throughput *= ImportanceSampleGGX([&gen, &dis]()->float { return dis(gen); }, hitData.normal, wo, m, reflected);
 	//						reflected = ImportanceSample(hitData.normal, [&gen, &dis]()->float { return dis(gen); });
 	//						throughput *= DisneyBRDF(hitData.normal, reflected, -ray.direction, m->color, m->roughness, m->metalness) / pdf(reflected, hitData.normal);
 
@@ -301,7 +321,7 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 							ray.origin = hitData.position;
 							ray.origin += ray.direction * 1e-6;
 
-							bounces--;
+							bounce++;
 						}
 						else
 						{
@@ -344,7 +364,7 @@ int main() {
 	LoosePrimitives prims(std::move(primitives));
 
 	std::vector<std::unique_ptr<Light>> lights;
-	lights.push_back(std::make_unique<Light>(vector3(-1.5f, 1.0f, 3.0f), vector3(5.0f, 5.0f, 5.0f)));
+	lights.push_back(std::make_unique<Light>(vector3(-1.5f, 1.0f, 3.0f), vector3(5.0f, 5.0f, 5.0f), 25.0f));
 
 	Scene scene(prims, lights);
 	scene.m_skyMaterial = &sky;
