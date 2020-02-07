@@ -263,3 +263,6 @@ __pycache__/
 #output image
 *.ppm
 *.png
+*.o
+*.d
+rt
