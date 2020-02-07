@@ -1,5 +1,5 @@
 TARGET := rt
-CXXFLAGS := -std=c++17
+CXXFLAGS := -std=c++17 -O2
 CXX := g++
 SRCS := \
 	main.cpp \
