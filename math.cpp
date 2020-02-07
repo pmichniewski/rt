@@ -10,6 +10,11 @@ vector3 vector3::normalized()
 	return result;
 }
 
+vector3 clamp(const vector3 &a, float t0, float t1)
+{
+	return vector3(clamp(a.x, t0, t1), clamp(a.y, t0, t1), clamp(a.z, t0, t1));
+}
+
 vector3 lerp(const vector3 &a, const vector3 &b, float t)
 {
 	vector3 result;

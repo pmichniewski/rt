@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <atomic>
+#include <chrono>
 
 float toSRGB(float in)
 {
@@ -84,6 +86,16 @@ vector3 Reinhard(vector3 color)
 	vector3 mapped = color / (color + vector3(1.0f, 1.0f, 1.0f));
 
 	return mapped;
+}
+
+vector3 ACES(vector3 x)
+{
+	float a = 2.51f;
+	float b = 0.03f;
+	float c = 2.43f;
+	float d = 0.59f;
+	float e = 0.14f;
+	return clamp((x*(a*x + b)) / (x*(c*x + d) + e), 0.0f, 1.0f);
 }
 
 void coordinateSystem(const vector3 &v1, vector3 *v2, vector3 *v3)
@@ -218,7 +230,35 @@ struct tileData
 	float *tileOutput;
 };
 
-void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int tileW, int tileH, int imageW, int imageH, float filmW, float filmH, vector3 cameraOrigin, const Scene *scene)
+vector3 diffuseSample(float e0, float e1, vector3 normal, vector3 wo, Material *m, vector3 &wi)
+{
+	float theta = 0.5f * pi * e0;
+	float phi = 2.0f * pi * e1;
+
+	wi = vector3(std::sin(theta) * std::cos(phi), std::cos(theta), std::sin(theta) * std::sin(phi)).normalized();
+
+	vector3 tangent;
+	vector3 binormal;
+	coordinateSystem(normal, &tangent, &binormal);
+	wi = tangent * wi.x + normal * wi.y + binormal * wi.z;
+
+	vector3 H = (wi + wo).normalized();
+	float LdotH = wi.dot(H);
+	float NdotH = normal.dot(H);
+
+	float NdotV = normal.dot(wo);
+	float NdotL = normal.dot(wi);
+
+	//diffuse
+	float FL = disneySchlick(NdotL);
+	float FV = disneySchlick(NdotV);
+	float Fd90 = 0.5f + 2.0f * NdotH * LdotH * m->roughness;
+	float Fd = lerp(1.0f, Fd90, FL) * lerp(1.0f, Fd90, FV);
+
+	return (rcpPi * Fd * (1.0f - m->metalness) * m->color) * clamp(NdotL, 0.0f, 1.0f);
+}
+
+void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, std::atomic<int> *completedTiles, int tileW, int tileH, int imageW, int imageH, float filmW, float filmH, vector3 cameraOrigin, const Scene *scene)
 {
 	auto getTile = [tileInfos, tileLock]()->std::optional<tileData>
 	{
@@ -236,7 +276,7 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 	std::minstd_rand gen(rd());
 	std::uniform_real_distribution<float> dis(0.0f, 1.0f);
 
-	static const int sampleCount = 256; // TODO: move this someplace better
+	static const int sampleCount = 64; // TODO: move this someplace better
 	static const int bounceCount = 10; // TODO: move this someplace better
 	auto tile = getTile();
 	while (tile.has_value())
@@ -283,7 +323,7 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 							{
 								vector3 lightVec = light->pos - hitData.position;
 								vector3 lightDir = lightVec.normalized();
-								Ray lightRay(hitData.position + (hitData.normal * 1e-5), lightDir);
+								Ray lightRay(hitData.position + (hitData.normal * 1e-6), lightDir);
 								if (!scene->Intersect(lightRay, nullptr))
 								{
 									float lightDistance = lightVec.length();
@@ -306,15 +346,26 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 	//						wo = vector3(hitData.normal.dot(wo), tangent.dot(wo), binormal.dot(wo));
 
 							vector3 reflected;
-							float e0 = dis(gen);
-							float e1 = dis(gen);
-							//hammersley(sample, sampleCount, 0, &e0, &e1);
-							throughput *= ImportanceSampleGGX(e0, e1, hitData.normal, wo, m, reflected);
-//							throughput *= ImportanceSampleGGX([&gen, &dis]()->float { return dis(gen); }, hitData.normal, wo, m, reflected);
-	//						reflected = ImportanceSample(hitData.normal, [&gen, &dis]()->float { return dis(gen); });
-	//						throughput *= DisneyBRDF(hitData.normal, reflected, -ray.direction, m->color, m->roughness, m->metalness) / pdf(reflected, hitData.normal);
 
-	//						reflected = hitData.normal * reflected.x + tangent * reflected.y + binormal * reflected.z;
+							float r = dis(gen);
+							if (r < 0.5f) { // specular bounce
+								float e0 = dis(gen);
+								float e1 = dis(gen);
+								//hammersley(sample, sampleCount, 0, &e0, &e1);
+								throughput *= ImportanceSampleGGX(e0, e1, hitData.normal, wo, m, reflected);
+	//							throughput *= ImportanceSampleGGX([&gen, &dis]()->float { return dis(gen); }, hitData.normal, wo, m, reflected);
+		//						reflected = ImportanceSample(hitData.normal, [&gen, &dis]()->float { return dis(gen); });
+		//						throughput *= DisneyBRDF(hitData.normal, reflected, -ray.direction, m->color, m->roughness, m->metalness) / pdf(reflected, hitData.normal);
+
+		//						reflected = hitData.normal * reflected.x + tangent * reflected.y + binormal * reflected.z;
+							}
+							else
+							{ // diffuse bounce
+								float e0 = dis(gen);
+								float e1 = dis(gen);
+
+								throughput *= diffuseSample(e0, e1, hitData.normal, wo, m, reflected);
+							}
 
 							ray.direction = reflected;
 							ray.tMax = std::numeric_limits<float>::infinity();
@@ -333,13 +384,15 @@ void renderWorker(std::vector<tileData> *tileInfos, std::mutex *tileLock, int ti
 					}
 				}
 
-				L = Reinhard(L / static_cast<float>(sampleCount));
+//				L = Reinhard(L / static_cast<float>(sampleCount));
+				L = ACES(L / static_cast<float>(sampleCount));
 
 				data.tileOutput[(y * tileW + x) * 3 + 0] = toSRGB(L.x);
 				data.tileOutput[(y * tileW + x) * 3 + 1] = toSRGB(L.y);
 				data.tileOutput[(y * tileW + x) * 3 + 2] = toSRGB(L.z);
 			}
 		}
+		(*completedTiles)++;
 		tile = getTile();
 	}
 }
@@ -364,7 +417,7 @@ int main() {
 	LoosePrimitives prims(std::move(primitives));
 
 	std::vector<std::unique_ptr<Light>> lights;
-	lights.push_back(std::make_unique<Light>(vector3(-1.5f, 1.0f, 3.0f), vector3(5.0f, 5.0f, 5.0f), 25.0f));
+	lights.push_back(std::make_unique<Light>(vector3(-1.5f, 1.0f, 3.0f), vector3(1.0f, 1.0f, 1.0f), 100.0f));
 
 	Scene scene(prims, lights);
 	scene.m_skyMaterial = &sky;
@@ -380,6 +433,8 @@ int main() {
 	static const int tileStride = tileWidth * tileHeight * 3;
 	static const int tileCountX = divideRoundingUp(IMAGE_W, tileWidth);
 	static const int tileCountY = divideRoundingUp(IMAGE_H, tileHeight);
+	static const int tileCount = tileCountX * tileCountY;
+	std::atomic<int> completedTiles = 0;
 
 	std::vector<float> image(tileCountX * tileCountY * tileStride);
 
@@ -401,10 +456,16 @@ int main() {
 
 	std::vector<std::thread> workers;
 	std::mutex tileLock;
-	int maxThreads = std::thread::hardware_concurrency();
+	int maxThreads = 1;// std::thread::hardware_concurrency();
 	for (int i = 0; i < maxThreads; ++i) {
-		std::thread t(renderWorker, &tiles, &tileLock, tileWidth, tileHeight, IMAGE_W, IMAGE_H, filmW, filmH, cameraOrigin, &scene);
+		std::thread t(renderWorker, &tiles, &tileLock, &completedTiles, tileWidth, tileHeight, IMAGE_W, IMAGE_H, filmW, filmH, cameraOrigin, &scene);
 		workers.push_back(std::move(t));
+	}
+
+	while (completedTiles < tileCount)
+	{
+		std::cout << completedTiles << "/" << tileCount << std::endl;
+		std::this_thread::sleep_for(std::chrono::seconds(1));
 	}
 
 	for (int i = 0; i < maxThreads; ++i)
