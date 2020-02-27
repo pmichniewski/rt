@@ -487,11 +487,11 @@ int main() {
 					if (targetX < IMAGE_W && targetY < IMAGE_H)
 					{
 						data[(targetY * IMAGE_W + targetX) * 3 + 0] =
-							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 0] * 255.0f);
+							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 0] * 255.0f + 0.5f);
 						data[(targetY * IMAGE_W + targetX) * 3 + 1] =
-							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 1] * 255.0f);
+							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 1] * 255.0f + 0.5f);
 						data[(targetY * IMAGE_W + targetX) * 3 + 2] =
-							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 2] * 255.0f);
+							static_cast<uint8_t>(image[(y * tileCountX + x) * tileStride + (tileY * tileWidth + tileX) * 3 + 2] * 255.0f + 0.5f);
 					}
 				}
 			}
